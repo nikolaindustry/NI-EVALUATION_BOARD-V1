@@ -761,8 +761,8 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 📞 Support
 
-- **Website:** [https://NIKOLAINDUSTRY.com](https://NIKOLAINDUSTRY.com)
-- **Email:** support@example.com
+- **Website:** [https://nikolaindustry.com](https://nikolaindustry.com)
+- **Email:** support@nikolaindustry.com
 - **GitHub Issues:** [Report a bug](https://github.com/nikolaindustry/NI-EVALUATION_BOARD-V1/issues)
 - **GitHub Discussions:** [Ask questions](https://github.com/nikolaindustry/NI-EVALUATION_BOARD-V1/discussions)
 
