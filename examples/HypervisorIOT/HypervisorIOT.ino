@@ -33,6 +33,14 @@ void setup() {
   // Core functions
   hyper.begin();
 
+  deviceId = hyper.getDeviceId();
+  Serial.print("Device ID: ");
+  Serial.println(deviceId);
+
+  userId=hyper.getUserId();
+  Serial.print("User ID: ");
+  Serial.println(userId);
+  
   // User-defined command callback
   hyper.setUserCommandHandler([](JsonObject& msg) {
     if (!msg.containsKey("payload")) return;

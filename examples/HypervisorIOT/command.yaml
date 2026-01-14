@@ -1,0 +1,415 @@
+# ========================================
+# NI Evaluation Board V1 - HypervisorIOT
+# Complete Command Reference (YAML Format)
+# ========================================
+
+# All commands follow this structure:
+# payload:
+#   action: "Operate" or "Query"
+#   sub_action: "Command_Name"
+#   params: { command-specific parameters }
+
+# ========================================
+# 1. RELAY CONTROL
+# ========================================
+relay_control:
+  description: "Control relays (individual or all)"
+  payload:
+    action: "Operate"
+    sub_action: "Relay_Control"
+    params:
+      channel: 1        # 0=all, 1=relay1, 2=relay2
+      state: true       # true=ON, false=OFF
+
+# ========================================
+# 2. DAC OUTPUT CONTROL (0-10V)
+# ========================================
+dac_ch0_voltage:
+  description: "Set DAC Channel 0 voltage (0-10V)"
+  payload:
+    action: "Operate"
+    sub_action: "DAC_CH0_Voltage"
+    params:
+      voltage: 5.0      # 0.0 to 10.0 volts
+
+dac_ch1_voltage:
+  description: "Set DAC Channel 1 voltage (0-10V)"
+  payload:
+    action: "Operate"
+    sub_action: "DAC_CH1_Voltage"
+    params:
+      voltage: 7.5      # 0.0 to 10.0 volts
+
+dac_ch0_raw:
+  description: "Set DAC Channel 0 raw value (12-bit)"
+  payload:
+    action: "Operate"
+    sub_action: "DAC_CH0_Raw"
+    params:
+      value: 2048       # 0 to 4095
+
+dac_ch1_raw:
+  description: "Set DAC Channel 1 raw value (12-bit)"
+  payload:
+    action: "Operate"
+    sub_action: "DAC_CH1_Raw"
+    params:
+      value: 4095       # 0 to 4095
+
+# ========================================
+# 3. PWM OUTPUT CONTROL
+# ========================================
+pwm_ch1_duty:
+  description: "Set PWM Channel 1 duty cycle"
+  payload:
+    action: "Operate"
+    sub_action: "PWM_CH1_Duty"
+    params:
+      duty: 128         # 0 to 255 (8-bit default)
+
+pwm_ch2_duty:
+  description: "Set PWM Channel 2 duty cycle"
+  payload:
+    action: "Operate"
+    sub_action: "PWM_CH2_Duty"
+    params:
+      duty: 255         # 0 to 255 (8-bit default)
+
+pwm_configure:
+  description: "Configure PWM frequency and resolution"
+  payload:
+    action: "Operate"
+    sub_action: "PWM_Configure"
+    params:
+      frequency: 10000  # Hz (e.g., 5000, 10000, 20000)
+      resolution: 10    # 1 to 16 bits
+
+# ========================================
+# 4. DIGITAL INPUT READING
+# ========================================
+read_digital_input:
+  description: "Read single digital input"
+  payload:
+    action: "Query"
+    sub_action: "Read_Digital_Input"
+    params:
+      channel: 1        # 1 to 8
+  response:
+    input: 1
+    state: true
+
+read_all_digital_inputs:
+  description: "Read all 8 digital inputs"
+  payload:
+    action: "Query"
+    sub_action: "Read_All_Digital_Inputs"
+    params: {}
+  response:
+    IN1: true
+    IN2: false
+    IN3: true
+    IN4: false
+    IN5: false
+    IN6: false
+    IN7: true
+    IN8: false
+
+# ========================================
+# 5. PULSE COUNTER
+# ========================================
+read_pulse_counter_1:
+  description: "Read pulse counter 1"
+  payload:
+    action: "Query"
+    sub_action: "Read_Pulse_Counter_1"
+    params:
+      reset: false      # true=reset after read, false=keep counting
+  response:
+    counter: 1
+    count: 12345
+
+read_pulse_counter_2:
+  description: "Read pulse counter 2"
+  payload:
+    action: "Query"
+    sub_action: "Read_Pulse_Counter_2"
+    params:
+      reset: false
+  response:
+    counter: 2
+    count: 67890
+
+reset_pulse_counter:
+  description: "Reset pulse counter"
+  payload:
+    action: "Operate"
+    sub_action: "Reset_Pulse_Counter"
+    params:
+      channel: 1        # 1 or 2
+
+# ========================================
+# 6. RS485 COMMUNICATION
+# ========================================
+rs485_send:
+  description: "Send message over RS485"
+  payload:
+    action: "Operate"
+    sub_action: "RS485_Send"
+    params:
+      message: "HELLO DEVICE"
+      newline: true     # true=add \n, false=no newline
+
+rs485_read:
+  description: "Read message from RS485"
+  payload:
+    action: "Query"
+    sub_action: "RS485_Read"
+    params:
+      timeout: 2000     # milliseconds
+  response:
+    message: "RESPONSE FROM DEVICE"
+
+# ========================================
+# 7. STATUS LED CONTROL
+# ========================================
+status_led:
+  description: "Control status LED"
+  payload:
+    action: "Operate"
+    sub_action: "Status_LED"
+    params:
+      state: true       # true=ON, false=OFF
+
+# ========================================
+# 8. I2C EXTERNAL DEVICE CONTROL
+# ========================================
+i2c_scan:
+  description: "Scan I2C bus for devices"
+  payload:
+    action: "Query"
+    sub_action: "I2C_Scan"
+    params: {}
+  response:
+    devices: [58, 60, 62]
+    count: 3
+
+i2c_write:
+  description: "Write data to I2C device"
+  payload:
+    action: "Operate"
+    sub_action: "I2C_Write"
+    params:
+      address: 60       # 1 to 127
+      data: [1, 17]     # array of bytes
+
+i2c_read:
+  description: "Read data from I2C device"
+  payload:
+    action: "Query"
+    sub_action: "I2C_Read"
+    params:
+      address: 60
+      bytes: 4
+  response:
+    address: 60
+    data: [10, 20, 30, 40]
+    count: 4
+
+i2c_write_read:
+  description: "Write then read from I2C device"
+  payload:
+    action: "Query"
+    sub_action: "I2C_Write_Read"
+    params:
+      address: 60
+      write_data: [2]
+      read_bytes: 2
+  response:
+    address: 60
+    data: [100, 200]
+    count: 2
+
+# ========================================
+# 9. MODBUS RTU MASTER COMMANDS
+# ========================================
+modbus_read_holding_registers:
+  description: "Read holding registers from Modbus slave (FC 0x03)"
+  payload:
+    action: "Query"
+    sub_action: "Modbus_Read_Holding_Registers"
+    params:
+      slave_address: 1      # 1 to 247
+      start_address: 0
+      quantity: 4           # 1 to 125
+  response:
+    success: true
+    slave: 1
+    start: 0
+    registers: [100, 200, 300, 400]
+
+modbus_read_input_registers:
+  description: "Read input registers from Modbus slave (FC 0x04)"
+  payload:
+    action: "Query"
+    sub_action: "Modbus_Read_Input_Registers"
+    params:
+      slave_address: 1
+      start_address: 0
+      quantity: 2           # 1 to 125
+  response:
+    success: true
+    slave: 1
+    registers: [250, 300]
+
+modbus_write_single_register:
+  description: "Write single register to Modbus slave (FC 0x06)"
+  payload:
+    action: "Operate"
+    sub_action: "Modbus_Write_Single_Register"
+    params:
+      slave_address: 1
+      register_address: 0
+      value: 5000           # 0 to 65535
+  response:
+    success: true
+    slave: 1
+    register: 0
+    value: 5000
+
+modbus_write_multiple_registers:
+  description: "Write multiple registers to Modbus slave (FC 0x10)"
+  payload:
+    action: "Operate"
+    sub_action: "Modbus_Write_Multiple_Registers"
+    params:
+      slave_address: 1
+      start_address: 10
+      values: [100, 200, 300, 400, 500]  # up to 123 values
+  response:
+    success: true
+    slave: 1
+    start: 10
+    quantity: 5
+
+modbus_write_single_coil:
+  description: "Write single coil to Modbus slave (FC 0x05)"
+  payload:
+    action: "Operate"
+    sub_action: "Modbus_Write_Single_Coil"
+    params:
+      slave_address: 1
+      coil_address: 0
+      value: true           # true=ON, false=OFF
+
+modbus_read_coils:
+  description: "Read coils from Modbus slave (FC 0x01)"
+  payload:
+    action: "Query"
+    sub_action: "Modbus_Read_Coils"
+    params:
+      slave_address: 1
+      start_address: 0
+      quantity: 8           # 1 to 2000
+  response:
+    success: true
+    coils: [true, false, true, true, false, false, false, true]
+
+# ========================================
+# 10. UI UPDATE COMMAND
+# ========================================
+get_ui:
+  description: "Trigger dashboard UI update"
+  payload:
+    command: "get_ui"
+
+# ========================================
+# USAGE EXAMPLES
+# ========================================
+examples:
+  
+  # Example 1: Turn on Relay 1
+  example_1:
+    payload:
+      action: "Operate"
+      sub_action: "Relay_Control"
+      params:
+        channel: 1
+        state: true
+  
+  # Example 2: Set DAC to 5V
+  example_2:
+    payload:
+      action: "Operate"
+      sub_action: "DAC_CH0_Voltage"
+      params:
+        voltage: 5.0
+  
+  # Example 3: Read temperature from Modbus sensor (slave 1)
+  example_3:
+    payload:
+      action: "Query"
+      sub_action: "Modbus_Read_Input_Registers"
+      params:
+        slave_address: 1
+        start_address: 0
+        quantity: 1
+  
+  # Example 4: Control remote PLC relay via Modbus
+  example_4:
+    payload:
+      action: "Operate"
+      sub_action: "Modbus_Write_Single_Coil"
+      params:
+        slave_address: 2
+        coil_address: 0
+        value: true
+  
+  # Example 5: Write setpoint to remote device via Modbus
+  example_5:
+    payload:
+      action: "Operate"
+      sub_action: "Modbus_Write_Single_Register"
+      params:
+        slave_address: 1
+        register_address: 100
+        value: 7500
+
+# ========================================
+# COMMAND SUMMARY
+# ========================================
+summary:
+  total_commands: 29
+  categories:
+    relay_control: 1
+    dac_outputs: 4
+    pwm_outputs: 3
+    digital_inputs: 2
+    pulse_counters: 3
+    rs485_communication: 2
+    status_led: 1
+    i2c_devices: 4
+    modbus_rtu: 6
+    ui_update: 1
+  
+  action_types:
+    operate: "Control/Write commands"
+    query: "Read/Request commands"
+  
+  modbus_function_codes:
+    - "0x01 - Read Coils"
+    - "0x03 - Read Holding Registers"
+    - "0x04 - Read Input Registers"
+    - "0x05 - Write Single Coil"
+    - "0x06 - Write Single Register"
+    - "0x10 - Write Multiple Registers"
+
+# ========================================
+# NOTES
+# ========================================
+notes:
+  - "All Modbus commands require RS485 connection to slave devices"
+  - "Slave addresses range from 1 to 247"
+  - "CRC calculation is automatic"
+  - "Compatible with PLCs, SCADA systems, and industrial sensors"
+  - "Use 9600 or 19200 baud for Modbus (configure in begin())"
+  - "Add 120Ω termination resistors on RS485 bus ends"
