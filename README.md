@@ -23,6 +23,8 @@ This library provides a high-level, unified API for all hardware features of the
   - [DAC 0-10V Outputs](#dac-0-10v-outputs)
   - [Pulse Counting](#pulse-counting)
   - [RS485 Communication](#rs485-communication)
+  - [Modbus RTU Master](#modbus-rtu-master)
+  - [Modbus RTU Slave](#modbus-rtu-slave)
   - [Push Button Events](#push-button-events)
   - [PWM Outputs](#pwm-outputs)
 - [Examples](#-examples)
@@ -39,13 +41,15 @@ This library provides a high-level, unified API for all hardware features of the
 - **2 Relay Outputs** - High-current relay control via PCF8574 (I2C: 0x3C)
 - **2 DAC Outputs** - 0-10V analog output with GP8403 12-bit DAC (I2C: 0x58)
 - **2 Pulse Counters** - Hardware interrupt-based pulse counting (GPIO 34, 35)
-- **RS485 Communication** - Half-duplex serial communication with line drivers
+- **RS485 Communication** - Half-duplex serial communication with automatic direction control
+- **Modbus RTU Protocol** - Full Master/Slave implementation for PLC/SCADA integration
 - **Push Button** - Advanced event detection (single, double, triple, long press)
 - **2 PWM Outputs** - Configurable frequency and resolution (GPIO 32, 33)
 - **Status LED** - Onboard indicator (GPIO 2)
 - **Easy-to-use API** - Single object controls all board features
 - **Interrupt-driven** - Efficient pulse counting without polling
 - **Non-blocking** - Button and RS485 operations don't block execution
+- **Industrial Standards** - Modbus RTU compliant for automation systems
 
 ---
 
@@ -424,6 +428,290 @@ if (response.length() > 0) {
 
 ---
 
+### Modbus RTU Master
+
+The library includes full Modbus RTU Master implementation for communicating with PLCs, SCADA systems, and industrial devices.
+
+#### `createModbusMaster()`
+
+Creates a Modbus RTU Master instance.
+
+```cpp
+NIModbusRTUMaster* createModbusMaster();
+```
+
+**Returns:** Pointer to Modbus RTU Master object
+
+**Example:**
+```cpp
+NIModbusRTUMaster *modbus = board.createModbusMaster();
+```
+
+#### `readHoldingRegisters()`
+
+Read holding registers from a slave device (Function Code 0x03).
+
+```cpp
+bool readHoldingRegisters(uint8_t slaveAddr, uint16_t startAddr, 
+                          uint16_t quantity, uint16_t *data);
+```
+
+**Parameters:**
+- `slaveAddr` - Slave device address (1-247)
+- `startAddr` - Starting register address
+- `quantity` - Number of registers to read (1-125)
+- `data` - Array to store read values
+
+**Returns:** `true` on success, `false` on error
+
+**Example:**
+```cpp
+uint16_t registers[4];
+if (modbus->readHoldingRegisters(1, 0, 4, registers)) {
+  Serial.print("Register 0: ");
+  Serial.println(registers[0]);
+}
+```
+
+#### `readInputRegisters()`
+
+Read input registers from a slave device (Function Code 0x04).
+
+```cpp
+bool readInputRegisters(uint8_t slaveAddr, uint16_t startAddr, 
+                        uint16_t quantity, uint16_t *data);
+```
+
+**Parameters:** Same as `readHoldingRegisters()`
+
+**Example:**
+```cpp
+uint16_t inputs[2];
+if (modbus->readInputRegisters(1, 100, 2, inputs)) {
+  float temperature = inputs[0] / 10.0;
+  Serial.println(temperature);
+}
+```
+
+#### `writeSingleRegister()`
+
+Write a single register to a slave device (Function Code 0x06).
+
+```cpp
+bool writeSingleRegister(uint8_t slaveAddr, uint16_t addr, uint16_t value);
+```
+
+**Parameters:**
+- `slaveAddr` - Slave device address
+- `addr` - Register address
+- `value` - Value to write
+
+**Returns:** `true` on success, `false` on error
+
+**Example:**
+```cpp
+if (modbus->writeSingleRegister(1, 0, 1234)) {
+  Serial.println("Register written successfully");
+}
+```
+
+#### `writeMultipleRegisters()`
+
+Write multiple registers to a slave device (Function Code 0x10).
+
+```cpp
+bool writeMultipleRegisters(uint8_t slaveAddr, uint16_t startAddr, 
+                            uint16_t quantity, const uint16_t *data);
+```
+
+**Parameters:**
+- `slaveAddr` - Slave device address
+- `startAddr` - Starting register address
+- `quantity` - Number of registers to write (1-123)
+- `data` - Array of values to write
+
+**Example:**
+```cpp
+uint16_t values[] = {100, 200, 300};
+if (modbus->writeMultipleRegisters(1, 10, 3, values)) {
+  Serial.println("Registers written successfully");
+}
+```
+
+#### `readCoils()` / `writeSingleCoil()` / `writeMultipleCoils()`
+
+Modbus coil operations (Function Codes 0x01, 0x05, 0x0F).
+
+```cpp
+bool readCoils(uint8_t slaveAddr, uint16_t startAddr, 
+               uint16_t quantity, uint8_t *data);
+bool writeSingleCoil(uint8_t slaveAddr, uint16_t addr, bool value);
+bool writeMultipleCoils(uint8_t slaveAddr, uint16_t startAddr, 
+                        uint16_t quantity, const uint8_t *data);
+```
+
+**Example:**
+```cpp
+// Write single coil
+modbus->writeSingleCoil(1, 0, true);  // Turn ON coil 0
+
+// Read coils
+uint8_t coilData[1];
+if (modbus->readCoils(1, 0, 8, coilData)) {
+  bool coil0 = coilData[0] & 0x01;
+}
+```
+
+#### `getLastException()`
+
+Get the last Modbus exception code.
+
+```cpp
+uint8_t getLastException();
+```
+
+**Returns:** Exception code (0x01-0x04) or 0 if no error
+
+**Example:**
+```cpp
+if (!modbus->readHoldingRegisters(1, 0, 1, &reg)) {
+  uint8_t error = modbus->getLastException();
+  Serial.print("Modbus error: 0x");
+  Serial.println(error, HEX);
+}
+```
+
+---
+
+### Modbus RTU Slave
+
+The library includes full Modbus RTU Slave implementation for responding to PLC/SCADA requests.
+
+#### `createModbusSlave()`
+
+Creates a Modbus RTU Slave instance.
+
+```cpp
+NIModbusRTUSlave* createModbusSlave(uint8_t slaveAddress);
+```
+
+**Parameters:**
+- `slaveAddress` - This device's Modbus address (1-247)
+
+**Returns:** Pointer to Modbus RTU Slave object
+
+**Example:**
+```cpp
+NIModbusRTUSlave *modbus = board.createModbusSlave(1);
+```
+
+#### `process()`
+
+Process incoming Modbus requests. **Call this regularly in `loop()`**.
+
+```cpp
+void process();
+```
+
+**Example:**
+```cpp
+void loop() {
+  modbus->process();
+  // Other code...
+}
+```
+
+#### Callback Registration
+
+Register callbacks to handle Modbus requests:
+
+```cpp
+void onReadCoil(ReadCoilCallback callback);
+void onWriteCoil(WriteCoilCallback callback);
+void onReadHoldingRegister(ReadRegisterCallback callback);
+void onReadInputRegister(ReadRegisterCallback callback);
+void onWriteHoldingRegister(WriteRegisterCallback callback);
+```
+
+**Callback Function Types:**
+```cpp
+typedef uint8_t (*ReadCoilCallback)(uint16_t address, bool *value);
+typedef uint8_t (*WriteCoilCallback)(uint16_t address, bool value);
+typedef uint8_t (*ReadRegisterCallback)(uint16_t address, uint16_t *value);
+typedef uint8_t (*WriteRegisterCallback)(uint16_t address, uint16_t value);
+```
+
+**Example:**
+```cpp
+uint16_t holdingRegisters[10];
+
+// Callback to read holding registers
+uint8_t readHoldingRegister(uint16_t address, uint16_t *value) {
+  if (address < 10) {
+    *value = holdingRegisters[address];
+    return 0;  // Success
+  }
+  return MODBUS_EX_ILLEGAL_DATA_ADDRESS;  // Error
+}
+
+// Callback to write holding registers
+uint8_t writeHoldingRegister(uint16_t address, uint16_t value) {
+  if (address == 0) {
+    // Control DAC output via Modbus
+    board.setAnalogVoltage(0, value / 1000.0);
+    holdingRegisters[0] = value;
+    return 0;
+  }
+  return MODBUS_EX_ILLEGAL_DATA_ADDRESS;
+}
+
+void setup() {
+  board.begin(9600);  // Modbus baud rate
+  modbus = board.createModbusSlave(1);
+  
+  // Register callbacks
+  modbus->onReadHoldingRegister(readHoldingRegister);
+  modbus->onWriteHoldingRegister(writeHoldingRegister);
+}
+```
+
+**Complete Slave Example:**
+```cpp
+#include <NI-EVALUATION_BOARD-V1.h>
+
+NIEvaluationBoardV1 board;
+NIModbusRTUSlave *modbus;
+
+uint8_t readCoil(uint16_t address, bool *value) {
+  if (address == 0) {
+    *value = board.readDigitalInput(1);
+    return 0;
+  }
+  return MODBUS_EX_ILLEGAL_DATA_ADDRESS;
+}
+
+uint8_t writeCoil(uint16_t address, bool value) {
+  if (address == 0) {
+    board.setRelay(1, value);
+    return 0;
+  }
+  return MODBUS_EX_ILLEGAL_DATA_ADDRESS;
+}
+
+void setup() {
+  board.begin(9600);
+  modbus = board.createModbusSlave(1);
+  modbus->onReadCoil(readCoil);
+  modbus->onWriteCoil(writeCoil);
+}
+
+void loop() {
+  modbus->process();
+}
+```
+
+---
+
 ### Push Button Events
 
 #### `updateButton()`
@@ -520,7 +808,7 @@ board.setPwmDuty(1, 2048);  // 50% of 4096 (12-bit)
 
 ## 💡 Examples
 
-The library includes 13 comprehensive examples:
+The library includes 16 comprehensive examples:
 
 ### Basic Examples
 - **[DacOutputSimple](examples/DacOutputSimple)** - Simple DAC voltage output
@@ -538,6 +826,11 @@ The library includes 13 comprehensive examples:
 - **[RS485slave](examples/RS485slave)** - RS485 slave communication
 - **[InputTest](examples/InputTest)** - Complete input testing
 - **[I2CScanner](examples/I2CScanner)** - Scan I2C bus for devices
+
+### Modbus RTU Examples
+- **[ModbusRTUMaster](examples/ModbusRTUMaster)** - Modbus master for PLC/SCADA integration
+- **[ModbusRTUSlave](examples/ModbusRTUSlave)** - Modbus slave device control
+- **[ModbusRTUTest](examples/ModbusRTUTest)** - CRC verification and diagnostics
 
 ### Load Examples in Arduino IDE
 
@@ -699,6 +992,28 @@ void handleModbusCommand(String cmd) {
 3. Check RS485 bus termination (120Ω resistors)
 4. Ensure common ground between devices
 5. Verify A/B polarity on RS485 connections
+
+### Modbus RTU Communication Issues
+
+**Problem:** Modbus requests fail or timeout
+
+**Solutions:**
+1. Verify baud rate matches (common: 9600, 19200, 115200)
+2. Check slave address is correct (1-247)
+3. Ensure 555 IC automatic direction control is working
+4. Use ModbusRTUTest example to verify CRC calculation
+5. Check frame timing (3.5 character silence between frames)
+6. Verify RS485 termination on both ends of bus
+7. Test with Modbus master software (QModMaster, ModbusPoll)
+8. Check for exception responses using `getLastException()`
+9. Ensure only one master transmits at a time
+10. Monitor Serial output for debugging messages
+
+**Modbus Exception Codes:**
+- 0x01 - Illegal Function (unsupported function code)
+- 0x02 - Illegal Data Address (invalid register/coil address)
+- 0x03 - Illegal Data Value (invalid parameter)
+- 0x04 - Slave Device Failure (callback error)
 
 ### Button Events Not Detected
 

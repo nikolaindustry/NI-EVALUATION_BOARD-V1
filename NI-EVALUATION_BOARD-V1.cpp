@@ -373,3 +373,756 @@ void NIEvaluationBoardV1::setPwmDuty(uint8_t channel, uint8_t duty) {
         ledcWrite(PIN_PWM2, duty);
     }
 }
+
+// -------------------------------------------------------
+// Modbus RTU Helper Methods
+// -------------------------------------------------------
+NIModbusRTUMaster* NIEvaluationBoardV1::createModbusMaster() {
+    return new NIModbusRTUMaster(rs485Port);
+}
+
+NIModbusRTUSlave* NIEvaluationBoardV1::createModbusSlave(uint8_t slaveAddress) {
+    return new NIModbusRTUSlave(rs485Port, slaveAddress);
+}
+
+// -------------------------------------------------------
+// Modbus RTU Master Implementation
+// -------------------------------------------------------
+NIModbusRTUMaster::NIModbusRTUMaster(HardwareSerial *serial) {
+    port = serial;
+    lastException = 0;
+}
+
+uint16_t NIModbusRTUMaster::calculateCRC(uint8_t *buffer, uint8_t length) {
+    uint16_t crc = 0xFFFF;
+    
+    for (uint8_t pos = 0; pos < length; pos++) {
+        crc ^= (uint16_t)buffer[pos];
+        
+        for (uint8_t i = 8; i != 0; i--) {
+            if ((crc & 0x0001) != 0) {
+                crc >>= 1;
+                crc ^= 0xA001;
+            } else {
+                crc >>= 1;
+            }
+        }
+    }
+    
+    return crc;
+}
+
+bool NIModbusRTUMaster::sendRequest(uint8_t *frame, uint8_t length) {
+    if (!port) return false;
+    
+    // Calculate and append CRC
+    uint16_t crc = calculateCRC(frame, length);
+    frame[length] = crc & 0xFF;        // CRC Low
+    frame[length + 1] = (crc >> 8) & 0xFF;  // CRC High
+    
+    // Clear RX buffer
+    while (port->available()) {
+        port->read();
+    }
+    
+    // Send frame
+    port->write(frame, length + 2);
+    port->flush();
+    
+    // Frame delay
+    delay(MODBUS_FRAME_DELAY);
+    
+    return true;
+}
+
+int NIModbusRTUMaster::receiveResponse(uint8_t expectedAddr, uint8_t expectedFunc, uint32_t timeout) {
+    if (!port) return -1;
+    
+    unsigned long startTime = millis();
+    uint8_t index = 0;
+    unsigned long lastByteTime = startTime;
+    
+    while (millis() - startTime < timeout) {
+        if (port->available()) {
+            rxBuffer[index++] = port->read();
+            lastByteTime = millis();
+            
+            if (index >= MODBUS_MAX_BUFFER) {
+                return -1;  // Buffer overflow
+            }
+        }
+        
+        // Check for frame completion (3.5 char silence time)
+        if (index > 0 && (millis() - lastByteTime) > MODBUS_FRAME_DELAY) {
+            break;
+        }
+    }
+    
+    // Validate minimum response length
+    if (index < 4) {
+        return -1;  // Too short
+    }
+    
+    // Verify CRC
+    uint16_t receivedCRC = rxBuffer[index - 2] | (rxBuffer[index - 1] << 8);
+    uint16_t calculatedCRC = calculateCRC(rxBuffer, index - 2);
+    
+    if (receivedCRC != calculatedCRC) {
+        return -1;  // CRC error
+    }
+    
+    // Check address
+    if (rxBuffer[0] != expectedAddr) {
+        return -1;  // Wrong slave
+    }
+    
+    // Check for exception response
+    if (rxBuffer[1] == (expectedFunc | 0x80)) {
+        lastException = rxBuffer[2];
+        return -1;  // Exception
+    }
+    
+    // Check function code
+    if (rxBuffer[1] != expectedFunc) {
+        return -1;  // Wrong function
+    }
+    
+    return index;  // Success, return frame length
+}
+
+bool NIModbusRTUMaster::readCoils(uint8_t slaveAddr, uint16_t startAddr, uint16_t quantity, uint8_t *data) {
+    if (quantity < 1 || quantity > 2000) return false;
+    
+    txBuffer[0] = slaveAddr;
+    txBuffer[1] = MODBUS_FC_READ_COILS;
+    txBuffer[2] = (startAddr >> 8) & 0xFF;
+    txBuffer[3] = startAddr & 0xFF;
+    txBuffer[4] = (quantity >> 8) & 0xFF;
+    txBuffer[5] = quantity & 0xFF;
+    
+    if (!sendRequest(txBuffer, 6)) return false;
+    
+    int len = receiveResponse(slaveAddr, MODBUS_FC_READ_COILS, MODBUS_RESPONSE_TIMEOUT);
+    if (len < 0) return false;
+    
+    uint8_t byteCount = rxBuffer[2];
+    if (len != (byteCount + 5)) return false;
+    
+    // Copy coil data
+    memcpy(data, &rxBuffer[3], byteCount);
+    
+    return true;
+}
+
+bool NIModbusRTUMaster::readDiscreteInputs(uint8_t slaveAddr, uint16_t startAddr, uint16_t quantity, uint8_t *data) {
+    if (quantity < 1 || quantity > 2000) return false;
+    
+    txBuffer[0] = slaveAddr;
+    txBuffer[1] = MODBUS_FC_READ_DISCRETE_INPUTS;
+    txBuffer[2] = (startAddr >> 8) & 0xFF;
+    txBuffer[3] = startAddr & 0xFF;
+    txBuffer[4] = (quantity >> 8) & 0xFF;
+    txBuffer[5] = quantity & 0xFF;
+    
+    if (!sendRequest(txBuffer, 6)) return false;
+    
+    int len = receiveResponse(slaveAddr, MODBUS_FC_READ_DISCRETE_INPUTS, MODBUS_RESPONSE_TIMEOUT);
+    if (len < 0) return false;
+    
+    uint8_t byteCount = rxBuffer[2];
+    if (len != (byteCount + 5)) return false;
+    
+    // Copy input data
+    memcpy(data, &rxBuffer[3], byteCount);
+    
+    return true;
+}
+
+bool NIModbusRTUMaster::readHoldingRegisters(uint8_t slaveAddr, uint16_t startAddr, uint16_t quantity, uint16_t *data) {
+    if (quantity < 1 || quantity > 125) return false;
+    
+    txBuffer[0] = slaveAddr;
+    txBuffer[1] = MODBUS_FC_READ_HOLDING_REGISTERS;
+    txBuffer[2] = (startAddr >> 8) & 0xFF;
+    txBuffer[3] = startAddr & 0xFF;
+    txBuffer[4] = (quantity >> 8) & 0xFF;
+    txBuffer[5] = quantity & 0xFF;
+    
+    if (!sendRequest(txBuffer, 6)) return false;
+    
+    int len = receiveResponse(slaveAddr, MODBUS_FC_READ_HOLDING_REGISTERS, MODBUS_RESPONSE_TIMEOUT);
+    if (len < 0) return false;
+    
+    uint8_t byteCount = rxBuffer[2];
+    if (len != (byteCount + 5)) return false;
+    
+    // Parse register data (big-endian)
+    for (uint16_t i = 0; i < quantity; i++) {
+        data[i] = (rxBuffer[3 + i * 2] << 8) | rxBuffer[4 + i * 2];
+    }
+    
+    return true;
+}
+
+bool NIModbusRTUMaster::readInputRegisters(uint8_t slaveAddr, uint16_t startAddr, uint16_t quantity, uint16_t *data) {
+    if (quantity < 1 || quantity > 125) return false;
+    
+    txBuffer[0] = slaveAddr;
+    txBuffer[1] = MODBUS_FC_READ_INPUT_REGISTERS;
+    txBuffer[2] = (startAddr >> 8) & 0xFF;
+    txBuffer[3] = startAddr & 0xFF;
+    txBuffer[4] = (quantity >> 8) & 0xFF;
+    txBuffer[5] = quantity & 0xFF;
+    
+    if (!sendRequest(txBuffer, 6)) return false;
+    
+    int len = receiveResponse(slaveAddr, MODBUS_FC_READ_INPUT_REGISTERS, MODBUS_RESPONSE_TIMEOUT);
+    if (len < 0) return false;
+    
+    uint8_t byteCount = rxBuffer[2];
+    if (len != (byteCount + 5)) return false;
+    
+    // Parse register data (big-endian)
+    for (uint16_t i = 0; i < quantity; i++) {
+        data[i] = (rxBuffer[3 + i * 2] << 8) | rxBuffer[4 + i * 2];
+    }
+    
+    return true;
+}
+
+bool NIModbusRTUMaster::writeSingleCoil(uint8_t slaveAddr, uint16_t addr, bool value) {
+    txBuffer[0] = slaveAddr;
+    txBuffer[1] = MODBUS_FC_WRITE_SINGLE_COIL;
+    txBuffer[2] = (addr >> 8) & 0xFF;
+    txBuffer[3] = addr & 0xFF;
+    txBuffer[4] = value ? 0xFF : 0x00;
+    txBuffer[5] = 0x00;
+    
+    if (!sendRequest(txBuffer, 6)) return false;
+    
+    int len = receiveResponse(slaveAddr, MODBUS_FC_WRITE_SINGLE_COIL, MODBUS_RESPONSE_TIMEOUT);
+    if (len < 0) return false;
+    
+    // Verify echo response
+    return (len == 8 && 
+            rxBuffer[2] == txBuffer[2] && 
+            rxBuffer[3] == txBuffer[3] &&
+            rxBuffer[4] == txBuffer[4] &&
+            rxBuffer[5] == txBuffer[5]);
+}
+
+bool NIModbusRTUMaster::writeSingleRegister(uint8_t slaveAddr, uint16_t addr, uint16_t value) {
+    txBuffer[0] = slaveAddr;
+    txBuffer[1] = MODBUS_FC_WRITE_SINGLE_REGISTER;
+    txBuffer[2] = (addr >> 8) & 0xFF;
+    txBuffer[3] = addr & 0xFF;
+    txBuffer[4] = (value >> 8) & 0xFF;
+    txBuffer[5] = value & 0xFF;
+    
+    if (!sendRequest(txBuffer, 6)) return false;
+    
+    int len = receiveResponse(slaveAddr, MODBUS_FC_WRITE_SINGLE_REGISTER, MODBUS_RESPONSE_TIMEOUT);
+    if (len < 0) return false;
+    
+    // Verify echo response
+    return (len == 8 && 
+            rxBuffer[2] == txBuffer[2] && 
+            rxBuffer[3] == txBuffer[3] &&
+            rxBuffer[4] == txBuffer[4] &&
+            rxBuffer[5] == txBuffer[5]);
+}
+
+bool NIModbusRTUMaster::writeMultipleCoils(uint8_t slaveAddr, uint16_t startAddr, uint16_t quantity, const uint8_t *data) {
+    if (quantity < 1 || quantity > 1968) return false;
+    
+    uint8_t byteCount = (quantity + 7) / 8;
+    
+    txBuffer[0] = slaveAddr;
+    txBuffer[1] = MODBUS_FC_WRITE_MULTIPLE_COILS;
+    txBuffer[2] = (startAddr >> 8) & 0xFF;
+    txBuffer[3] = startAddr & 0xFF;
+    txBuffer[4] = (quantity >> 8) & 0xFF;
+    txBuffer[5] = quantity & 0xFF;
+    txBuffer[6] = byteCount;
+    
+    memcpy(&txBuffer[7], data, byteCount);
+    
+    if (!sendRequest(txBuffer, 7 + byteCount)) return false;
+    
+    int len = receiveResponse(slaveAddr, MODBUS_FC_WRITE_MULTIPLE_COILS, MODBUS_RESPONSE_TIMEOUT);
+    if (len < 0) return false;
+    
+    return (len == 8);
+}
+
+bool NIModbusRTUMaster::writeMultipleRegisters(uint8_t slaveAddr, uint16_t startAddr, uint16_t quantity, const uint16_t *data) {
+    if (quantity < 1 || quantity > 123) return false;
+    
+    uint8_t byteCount = quantity * 2;
+    
+    txBuffer[0] = slaveAddr;
+    txBuffer[1] = MODBUS_FC_WRITE_MULTIPLE_REGISTERS;
+    txBuffer[2] = (startAddr >> 8) & 0xFF;
+    txBuffer[3] = startAddr & 0xFF;
+    txBuffer[4] = (quantity >> 8) & 0xFF;
+    txBuffer[5] = quantity & 0xFF;
+    txBuffer[6] = byteCount;
+    
+    // Pack register data (big-endian)
+    for (uint16_t i = 0; i < quantity; i++) {
+        txBuffer[7 + i * 2] = (data[i] >> 8) & 0xFF;
+        txBuffer[8 + i * 2] = data[i] & 0xFF;
+    }
+    
+    if (!sendRequest(txBuffer, 7 + byteCount)) return false;
+    
+    int len = receiveResponse(slaveAddr, MODBUS_FC_WRITE_MULTIPLE_REGISTERS, MODBUS_RESPONSE_TIMEOUT);
+    if (len < 0) return false;
+    
+    return (len == 8);
+}
+
+// -------------------------------------------------------
+// Modbus RTU Slave Implementation
+// -------------------------------------------------------
+NIModbusRTUSlave::NIModbusRTUSlave(HardwareSerial *serial, uint8_t slaveAddress) {
+    port = serial;
+    slaveAddr = slaveAddress;
+    
+    // Initialize callbacks to nullptr
+    readCoilCb = nullptr;
+    writeCoilCb = nullptr;
+    readHoldingRegCb = nullptr;
+    readInputRegCb = nullptr;
+    writeHoldingRegCb = nullptr;
+}
+
+uint16_t NIModbusRTUSlave::calculateCRC(uint8_t *buffer, uint8_t length) {
+    uint16_t crc = 0xFFFF;
+    
+    for (uint8_t pos = 0; pos < length; pos++) {
+        crc ^= (uint16_t)buffer[pos];
+        
+        for (uint8_t i = 8; i != 0; i--) {
+            if ((crc & 0x0001) != 0) {
+                crc >>= 1;
+                crc ^= 0xA001;
+            } else {
+                crc >>= 1;
+            }
+        }
+    }
+    
+    return crc;
+}
+
+void NIModbusRTUSlave::sendResponse(uint8_t *frame, uint8_t length) {
+    if (!port) return;
+    
+    // Calculate and append CRC
+    uint16_t crc = calculateCRC(frame, length);
+    frame[length] = crc & 0xFF;
+    frame[length + 1] = (crc >> 8) & 0xFF;
+    
+    // Send response
+    port->write(frame, length + 2);
+    port->flush();
+    
+    delay(MODBUS_FRAME_DELAY);
+}
+
+void NIModbusRTUSlave::sendException(uint8_t functionCode, uint8_t exceptionCode) {
+    txBuffer[0] = slaveAddr;
+    txBuffer[1] = functionCode | 0x80;  // Set exception bit
+    txBuffer[2] = exceptionCode;
+    
+    sendResponse(txBuffer, 3);
+}
+
+void NIModbusRTUSlave::process() {
+    if (!port || !port->available()) return;
+    
+    // Read incoming frame
+    uint8_t index = 0;
+    unsigned long lastByteTime = millis();
+    
+    while (port->available() && index < MODBUS_MAX_BUFFER) {
+        rxBuffer[index++] = port->read();
+        lastByteTime = millis();
+        
+        // Wait for more bytes with timeout
+        while (!port->available() && (millis() - lastByteTime) < MODBUS_FRAME_DELAY) {
+            delayMicroseconds(100);
+        }
+        
+        // Check for end of frame
+        if (!port->available() && (millis() - lastByteTime) >= MODBUS_FRAME_DELAY) {
+            break;
+        }
+    }
+    
+    // Validate minimum frame length
+    if (index < 4) return;
+    
+    // Verify CRC
+    uint16_t receivedCRC = rxBuffer[index - 2] | (rxBuffer[index - 1] << 8);
+    uint16_t calculatedCRC = calculateCRC(rxBuffer, index - 2);
+    
+    if (receivedCRC != calculatedCRC) {
+        return;  // CRC error, ignore frame
+    }
+    
+    // Check if frame is for this slave
+    if (rxBuffer[0] != slaveAddr) {
+        return;  // Not for us
+    }
+    
+    // Process function code
+    uint8_t functionCode = rxBuffer[1];
+    
+    switch (functionCode) {
+        case MODBUS_FC_READ_COILS:
+            handleReadCoils(rxBuffer, index - 2);
+            break;
+        case MODBUS_FC_READ_DISCRETE_INPUTS:
+            handleReadDiscreteInputs(rxBuffer, index - 2);
+            break;
+        case MODBUS_FC_READ_HOLDING_REGISTERS:
+            handleReadHoldingRegisters(rxBuffer, index - 2);
+            break;
+        case MODBUS_FC_READ_INPUT_REGISTERS:
+            handleReadInputRegisters(rxBuffer, index - 2);
+            break;
+        case MODBUS_FC_WRITE_SINGLE_COIL:
+            handleWriteSingleCoil(rxBuffer, index - 2);
+            break;
+        case MODBUS_FC_WRITE_SINGLE_REGISTER:
+            handleWriteSingleRegister(rxBuffer, index - 2);
+            break;
+        case MODBUS_FC_WRITE_MULTIPLE_COILS:
+            handleWriteMultipleCoils(rxBuffer, index - 2);
+            break;
+        case MODBUS_FC_WRITE_MULTIPLE_REGISTERS:
+            handleWriteMultipleRegisters(rxBuffer, index - 2);
+            break;
+        default:
+            sendException(functionCode, MODBUS_EX_ILLEGAL_FUNCTION);
+            break;
+    }
+}
+
+void NIModbusRTUSlave::handleReadCoils(uint8_t *request, uint8_t requestLen) {
+    if (requestLen != 6) {
+        sendException(MODBUS_FC_READ_COILS, MODBUS_EX_ILLEGAL_DATA_VALUE);
+        return;
+    }
+    
+    if (!readCoilCb) {
+        sendException(MODBUS_FC_READ_COILS, MODBUS_EX_ILLEGAL_FUNCTION);
+        return;
+    }
+    
+    uint16_t startAddr = (request[2] << 8) | request[3];
+    uint16_t quantity = (request[4] << 8) | request[5];
+    
+    if (quantity < 1 || quantity > 2000) {
+        sendException(MODBUS_FC_READ_COILS, MODBUS_EX_ILLEGAL_DATA_VALUE);
+        return;
+    }
+    
+    uint8_t byteCount = (quantity + 7) / 8;
+    
+    txBuffer[0] = slaveAddr;
+    txBuffer[1] = MODBUS_FC_READ_COILS;
+    txBuffer[2] = byteCount;
+    
+    // Read coils using callback
+    memset(&txBuffer[3], 0, byteCount);
+    
+    for (uint16_t i = 0; i < quantity; i++) {
+        bool value = false;
+        uint8_t result = readCoilCb(startAddr + i, &value);
+        
+        if (result != 0) {
+            sendException(MODBUS_FC_READ_COILS, result);
+            return;
+        }
+        
+        if (value) {
+            txBuffer[3 + (i / 8)] |= (1 << (i % 8));
+        }
+    }
+    
+    sendResponse(txBuffer, 3 + byteCount);
+}
+
+void NIModbusRTUSlave::handleReadDiscreteInputs(uint8_t *request, uint8_t requestLen) {
+    if (requestLen != 6) {
+        sendException(MODBUS_FC_READ_DISCRETE_INPUTS, MODBUS_EX_ILLEGAL_DATA_VALUE);
+        return;
+    }
+    
+    if (!readCoilCb) {  // Use same callback as coils for discrete inputs
+        sendException(MODBUS_FC_READ_DISCRETE_INPUTS, MODBUS_EX_ILLEGAL_FUNCTION);
+        return;
+    }
+    
+    uint16_t startAddr = (request[2] << 8) | request[3];
+    uint16_t quantity = (request[4] << 8) | request[5];
+    
+    if (quantity < 1 || quantity > 2000) {
+        sendException(MODBUS_FC_READ_DISCRETE_INPUTS, MODBUS_EX_ILLEGAL_DATA_VALUE);
+        return;
+    }
+    
+    uint8_t byteCount = (quantity + 7) / 8;
+    
+    txBuffer[0] = slaveAddr;
+    txBuffer[1] = MODBUS_FC_READ_DISCRETE_INPUTS;
+    txBuffer[2] = byteCount;
+    
+    // Read inputs using callback
+    memset(&txBuffer[3], 0, byteCount);
+    
+    for (uint16_t i = 0; i < quantity; i++) {
+        bool value = false;
+        uint8_t result = readCoilCb(startAddr + i, &value);
+        
+        if (result != 0) {
+            sendException(MODBUS_FC_READ_DISCRETE_INPUTS, result);
+            return;
+        }
+        
+        if (value) {
+            txBuffer[3 + (i / 8)] |= (1 << (i % 8));
+        }
+    }
+    
+    sendResponse(txBuffer, 3 + byteCount);
+}
+
+void NIModbusRTUSlave::handleReadHoldingRegisters(uint8_t *request, uint8_t requestLen) {
+    if (requestLen != 6) {
+        sendException(MODBUS_FC_READ_HOLDING_REGISTERS, MODBUS_EX_ILLEGAL_DATA_VALUE);
+        return;
+    }
+    
+    if (!readHoldingRegCb) {
+        sendException(MODBUS_FC_READ_HOLDING_REGISTERS, MODBUS_EX_ILLEGAL_FUNCTION);
+        return;
+    }
+    
+    uint16_t startAddr = (request[2] << 8) | request[3];
+    uint16_t quantity = (request[4] << 8) | request[5];
+    
+    if (quantity < 1 || quantity > 125) {
+        sendException(MODBUS_FC_READ_HOLDING_REGISTERS, MODBUS_EX_ILLEGAL_DATA_VALUE);
+        return;
+    }
+    
+    uint8_t byteCount = quantity * 2;
+    
+    txBuffer[0] = slaveAddr;
+    txBuffer[1] = MODBUS_FC_READ_HOLDING_REGISTERS;
+    txBuffer[2] = byteCount;
+    
+    // Read registers using callback
+    for (uint16_t i = 0; i < quantity; i++) {
+        uint16_t value = 0;
+        uint8_t result = readHoldingRegCb(startAddr + i, &value);
+        
+        if (result != 0) {
+            sendException(MODBUS_FC_READ_HOLDING_REGISTERS, result);
+            return;
+        }
+        
+        txBuffer[3 + i * 2] = (value >> 8) & 0xFF;
+        txBuffer[4 + i * 2] = value & 0xFF;
+    }
+    
+    sendResponse(txBuffer, 3 + byteCount);
+}
+
+void NIModbusRTUSlave::handleReadInputRegisters(uint8_t *request, uint8_t requestLen) {
+    if (requestLen != 6) {
+        sendException(MODBUS_FC_READ_INPUT_REGISTERS, MODBUS_EX_ILLEGAL_DATA_VALUE);
+        return;
+    }
+    
+    if (!readInputRegCb) {
+        sendException(MODBUS_FC_READ_INPUT_REGISTERS, MODBUS_EX_ILLEGAL_FUNCTION);
+        return;
+    }
+    
+    uint16_t startAddr = (request[2] << 8) | request[3];
+    uint16_t quantity = (request[4] << 8) | request[5];
+    
+    if (quantity < 1 || quantity > 125) {
+        sendException(MODBUS_FC_READ_INPUT_REGISTERS, MODBUS_EX_ILLEGAL_DATA_VALUE);
+        return;
+    }
+    
+    uint8_t byteCount = quantity * 2;
+    
+    txBuffer[0] = slaveAddr;
+    txBuffer[1] = MODBUS_FC_READ_INPUT_REGISTERS;
+    txBuffer[2] = byteCount;
+    
+    // Read registers using callback
+    for (uint16_t i = 0; i < quantity; i++) {
+        uint16_t value = 0;
+        uint8_t result = readInputRegCb(startAddr + i, &value);
+        
+        if (result != 0) {
+            sendException(MODBUS_FC_READ_INPUT_REGISTERS, result);
+            return;
+        }
+        
+        txBuffer[3 + i * 2] = (value >> 8) & 0xFF;
+        txBuffer[4 + i * 2] = value & 0xFF;
+    }
+    
+    sendResponse(txBuffer, 3 + byteCount);
+}
+
+void NIModbusRTUSlave::handleWriteSingleCoil(uint8_t *request, uint8_t requestLen) {
+    if (requestLen != 6) {
+        sendException(MODBUS_FC_WRITE_SINGLE_COIL, MODBUS_EX_ILLEGAL_DATA_VALUE);
+        return;
+    }
+    
+    if (!writeCoilCb) {
+        sendException(MODBUS_FC_WRITE_SINGLE_COIL, MODBUS_EX_ILLEGAL_FUNCTION);
+        return;
+    }
+    
+    uint16_t addr = (request[2] << 8) | request[3];
+    uint16_t value = (request[4] << 8) | request[5];
+    
+    if (value != 0x0000 && value != 0xFF00) {
+        sendException(MODBUS_FC_WRITE_SINGLE_COIL, MODBUS_EX_ILLEGAL_DATA_VALUE);
+        return;
+    }
+    
+    bool coilValue = (value == 0xFF00);
+    uint8_t result = writeCoilCb(addr, coilValue);
+    
+    if (result != 0) {
+        sendException(MODBUS_FC_WRITE_SINGLE_COIL, result);
+        return;
+    }
+    
+    // Echo request as response
+    memcpy(txBuffer, request, 6);
+    sendResponse(txBuffer, 6);
+}
+
+void NIModbusRTUSlave::handleWriteSingleRegister(uint8_t *request, uint8_t requestLen) {
+    if (requestLen != 6) {
+        sendException(MODBUS_FC_WRITE_SINGLE_REGISTER, MODBUS_EX_ILLEGAL_DATA_VALUE);
+        return;
+    }
+    
+    if (!writeHoldingRegCb) {
+        sendException(MODBUS_FC_WRITE_SINGLE_REGISTER, MODBUS_EX_ILLEGAL_FUNCTION);
+        return;
+    }
+    
+    uint16_t addr = (request[2] << 8) | request[3];
+    uint16_t value = (request[4] << 8) | request[5];
+    
+    uint8_t result = writeHoldingRegCb(addr, value);
+    
+    if (result != 0) {
+        sendException(MODBUS_FC_WRITE_SINGLE_REGISTER, result);
+        return;
+    }
+    
+    // Echo request as response
+    memcpy(txBuffer, request, 6);
+    sendResponse(txBuffer, 6);
+}
+
+void NIModbusRTUSlave::handleWriteMultipleCoils(uint8_t *request, uint8_t requestLen) {
+    if (requestLen < 8) {
+        sendException(MODBUS_FC_WRITE_MULTIPLE_COILS, MODBUS_EX_ILLEGAL_DATA_VALUE);
+        return;
+    }
+    
+    if (!writeCoilCb) {
+        sendException(MODBUS_FC_WRITE_MULTIPLE_COILS, MODBUS_EX_ILLEGAL_FUNCTION);
+        return;
+    }
+    
+    uint16_t startAddr = (request[2] << 8) | request[3];
+    uint16_t quantity = (request[4] << 8) | request[5];
+    uint8_t byteCount = request[6];
+    
+    if (quantity < 1 || quantity > 1968 || byteCount != ((quantity + 7) / 8)) {
+        sendException(MODBUS_FC_WRITE_MULTIPLE_COILS, MODBUS_EX_ILLEGAL_DATA_VALUE);
+        return;
+    }
+    
+    // Write coils using callback
+    for (uint16_t i = 0; i < quantity; i++) {
+        bool value = (request[7 + (i / 8)] & (1 << (i % 8))) != 0;
+        uint8_t result = writeCoilCb(startAddr + i, value);
+        
+        if (result != 0) {
+            sendException(MODBUS_FC_WRITE_MULTIPLE_COILS, result);
+            return;
+        }
+    }
+    
+    // Build response
+    txBuffer[0] = slaveAddr;
+    txBuffer[1] = MODBUS_FC_WRITE_MULTIPLE_COILS;
+    txBuffer[2] = request[2];
+    txBuffer[3] = request[3];
+    txBuffer[4] = request[4];
+    txBuffer[5] = request[5];
+    
+    sendResponse(txBuffer, 6);
+}
+
+void NIModbusRTUSlave::handleWriteMultipleRegisters(uint8_t *request, uint8_t requestLen) {
+    if (requestLen < 9) {
+        sendException(MODBUS_FC_WRITE_MULTIPLE_REGISTERS, MODBUS_EX_ILLEGAL_DATA_VALUE);
+        return;
+    }
+    
+    if (!writeHoldingRegCb) {
+        sendException(MODBUS_FC_WRITE_MULTIPLE_REGISTERS, MODBUS_EX_ILLEGAL_FUNCTION);
+        return;
+    }
+    
+    uint16_t startAddr = (request[2] << 8) | request[3];
+    uint16_t quantity = (request[4] << 8) | request[5];
+    uint8_t byteCount = request[6];
+    
+    if (quantity < 1 || quantity > 123 || byteCount != (quantity * 2)) {
+        sendException(MODBUS_FC_WRITE_MULTIPLE_REGISTERS, MODBUS_EX_ILLEGAL_DATA_VALUE);
+        return;
+    }
+    
+    // Write registers using callback
+    for (uint16_t i = 0; i < quantity; i++) {
+        uint16_t value = (request[7 + i * 2] << 8) | request[8 + i * 2];
+        uint8_t result = writeHoldingRegCb(startAddr + i, value);
+        
+        if (result != 0) {
+            sendException(MODBUS_FC_WRITE_MULTIPLE_REGISTERS, result);
+            return;
+        }
+    }
+    
+    // Build response
+    txBuffer[0] = slaveAddr;
+    txBuffer[1] = MODBUS_FC_WRITE_MULTIPLE_REGISTERS;
+    txBuffer[2] = request[2];
+    txBuffer[3] = request[3];
+    txBuffer[4] = request[4];
+    txBuffer[5] = request[5];
+    
+    sendResponse(txBuffer, 6);
+}
