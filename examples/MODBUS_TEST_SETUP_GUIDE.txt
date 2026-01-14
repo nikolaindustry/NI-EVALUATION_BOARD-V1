@@ -1,0 +1,229 @@
+// Quick Setup Guide for Testing Modbus RTU Between Two Boards
+// =============================================================
+//
+// This guide helps you test Modbus RTU communication between two
+// NI Evaluation Board V1 devices.
+//
+// ============================================
+// HARDWARE SETUP
+// ============================================
+//
+// Board Connections:
+// ------------------
+//   Board 1 (Master)          Board 2 (Slave)
+//   ================          ================
+//   RS485 A    <----------->  RS485 A
+//   RS485 B    <----------->  RS485 B
+//   GND        <----------->  GND
+//
+// Important:
+// 1. Connect A to A and B to B (DO NOT cross them)
+// 2. If no communication, try swapping A and B
+// 3. Both boards must share common GND
+// 4. Add 120Ω termination resistor between A-B on EACH board
+//
+// Termination Resistor:
+// --------------------
+//   [Board 1 A] ----+---- [Board 2 A]
+//                   |
+//                 120Ω
+//                   |
+//   [Board 1 B] ----+---- [Board 2 B]
+//
+// Power:
+// ------
+// - Both boards need separate power supplies
+// - Or use USB power for both boards
+//
+// ============================================
+// SOFTWARE SETUP
+// ============================================
+//
+// Step 1: Upload Master Code
+// ---------------------------
+// 1. Open Arduino IDE
+// 2. Select Board 1 (Master)
+// 3. Open: File > Examples > NI-EVALUATION_BOARD-V1 > ModbusRTUMasterTest
+// 4. Upload to Board 1
+// 5. Open Serial Monitor at 115200 baud
+//
+// Step 2: Upload Slave Code
+// --------------------------
+// 1. Keep Board 1 connected (don't disconnect)
+// 2. Connect Board 2 (Slave)
+// 3. Open: File > Examples > NI-EVALUATION_BOARD-V1 > ModbusRTUSlaveTest
+// 4. Upload to Board 2
+// 5. Open Serial Monitor at 115200 baud (new window)
+//
+// Step 3: Verify Communication
+// -----------------------------
+// 1. Both Serial Monitors should be open side-by-side
+// 2. Master should show test cycles every 2 seconds
+// 3. Slave should show incoming requests
+// 4. Check for "✓ SUCCESS" on master
+// 5. Check for "📥 [#] REQUEST" on slave
+//
+// ============================================
+// WHAT TO EXPECT
+// ============================================
+//
+// Master Serial Monitor:
+// ----------------------
+// Test Cycle #1
+// ========================================
+// Test 1: Read Holding Registers
+// -------------------------------
+// ✓ SUCCESS
+//   Register 0 (DAC0 mV): 0
+//   Register 1 (DAC1 mV): 0
+//   ...
+//
+// Test 2: Write Single Register (Control Slave DAC)
+// --------------------------------------------------
+// ✓ SUCCESS - Slave DAC0 should now output 0.0 V
+//   ...
+//
+// Slave Serial Monitor:
+// ---------------------
+// 📥 [1] READ HOLDING REG @ 0x00
+//   ✓ DAC0 voltage (mV): 0
+// 📥 [2] READ HOLDING REG @ 0x01
+//   ✓ DAC1 voltage (mV): 0
+//   ...
+//
+// Physical Indicators:
+// --------------------
+// - Relay clicks every 2 seconds on slave board
+// - DAC voltage changes (measure with voltmeter)
+// - PWM outputs vary (visible if LED connected)
+//
+// ============================================
+// TROUBLESHOOTING
+// ============================================
+//
+// Problem 1: "No requests received" on slave
+// -------------------------------------------
+// Solution:
+// ✓ Check RS485 wiring (A-A, B-B, GND-GND)
+// ✓ Try swapping A and B connections
+// ✓ Verify both boards are powered
+// ✓ Check baud rate is 9600 on both
+// ✓ Ensure master code is running
+//
+// Problem 2: "✗ FAILED" on all master tests
+// ------------------------------------------
+// Solution:
+// ✓ Verify slave address matches (default: 1)
+// ✓ Check if slave board is running
+// ✓ Add 120Ω termination resistors
+// ✓ Reduce cable length if very long
+// ✓ Check RS485 A/B polarity
+//
+// Problem 3: Some tests pass, others fail
+// ----------------------------------------
+// Solution:
+// ✓ Check exception code (0x01-0x04)
+// ✓ Verify register addresses are correct
+// ✓ Check slave callbacks are registered
+// ✓ Monitor slave Serial for error messages
+//
+// Problem 4: Communication works but unstable
+// --------------------------------------------
+// Solution:
+// ✓ Add/check 120Ω termination on both ends
+// ✓ Use twisted pair cable for RS485
+// ✓ Keep cables away from power lines
+// ✓ Ensure solid GND connection
+// ✓ Try lower baud rate (e.g., 4800)
+//
+// ============================================
+// TESTING CHECKLIST
+// ============================================
+//
+// Hardware:
+// □ RS485 A-A connected
+// □ RS485 B-B connected
+// □ GND-GND connected
+// □ 120Ω resistor on Board 1
+// □ 120Ω resistor on Board 2
+// □ Both boards powered
+//
+// Software:
+// □ Master code uploaded to Board 1
+// □ Slave code uploaded to Board 2
+// □ Serial Monitor open for Board 1 (115200 baud)
+// □ Serial Monitor open for Board 2 (115200 baud)
+//
+// Communication:
+// □ Master shows "✓ SUCCESS" messages
+// □ Slave shows "📥 [#] REQUEST" messages
+// □ Relay clicks on slave board
+// □ DAC voltage measured and changing
+// □ No timeout or exception errors
+//
+// ============================================
+// ADVANCED TESTING
+// ============================================
+//
+// Test with Different Baud Rates:
+// --------------------------------
+// Change both sketches:
+//   const uint32_t MODBUS_BAUD = 19200;  // or 38400, 57600
+//
+// Test with Multiple Slaves:
+// ---------------------------
+// 1. Set different slave addresses:
+//      Slave 1: const uint8_t SLAVE_ADDRESS = 1;
+//      Slave 2: const uint8_t SLAVE_ADDRESS = 2;
+// 2. Modify master to communicate with both
+// 3. All slaves on same RS485 bus
+//
+// Test with PLC Software:
+// -----------------------
+// 1. Keep slave board running
+// 2. Use QModMaster or ModbusPoll
+// 3. Configure: 9600 baud, 8N1, RTU mode
+// 4. Test reading/writing registers
+//
+// ============================================
+// MODBUS REGISTER MAP (SLAVE)
+// ============================================
+//
+// Coils (Read/Write):
+// -------------------
+// 0x00 - Relay 1 (ON/OFF)
+// 0x01 - Relay 2 (ON/OFF)
+// 0x02 - Status LED (ON/OFF)
+//
+// Discrete Inputs (Read Only):
+// -----------------------------
+// 0x00-0x07 - Digital Inputs 1-8
+//
+// Holding Registers (Read/Write):
+// --------------------------------
+// 0x00 - DAC Channel 0 (mV, 0-10000)
+// 0x01 - DAC Channel 1 (mV, 0-10000)
+// 0x02 - PWM Channel 1 (duty, 0-255)
+// 0x03 - PWM Channel 2 (duty, 0-255)
+// 0x0A - Relay control (bit0=R1, bit1=R2)
+//
+// Input Registers (Read Only):
+// -----------------------------
+// 0x00-0x07 - Digital Input states (0/1)
+// 0x08 - Pulse Counter 1 (low word)
+// 0x09 - Pulse Counter 1 (high word)
+// 0x0A - Pulse Counter 2 (low word)
+// 0x0B - Pulse Counter 2 (high word)
+//
+// ============================================
+// SUPPORT
+// ============================================
+//
+// If you still have issues:
+// 1. Check RS485 circuit schematic
+// 2. Verify 555 IC is working (automatic direction control)
+// 3. Test with shorter cables first
+// 4. Use oscilloscope to check RS485 signals
+// 5. Contact support@nikolaindustry.com
+//
+// ============================================
