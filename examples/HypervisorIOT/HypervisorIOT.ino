@@ -3,6 +3,7 @@
 
 NIEvaluationBoardV1 board;
 HyperwisorIOT hyper;
+NIModbusRTUMaster *modbus;  // Modbus RTU Master instance
 
 String apikey = "";
 String secretkey = "";
@@ -21,6 +22,10 @@ void setup() {
   } else {
     Serial.println("Board initialization failed!");
   }
+
+  // Initialize Modbus RTU Master
+  modbus = board.createModbusMaster();
+  Serial.println("Modbus RTU Master initialized");
 
   hyper.setApiKeys(apikey, secretkey);
   // Time and date functions
@@ -293,6 +298,234 @@ void setup() {
       Serial.print("Total devices found: ");
       Serial.println(deviceCount);
       // hyper.sendMessage(msgfrom, response); // Uncomment to send response
+    }
+
+    // ============ MODBUS RTU MASTER CONTROL ============
+    // Modbus Read Holding Registers
+    JsonObject modbusReadHolding = hyper.findAction(payload, "Query", "Modbus_Read_Holding_Registers");
+    if (!modbusReadHolding.isNull()) {
+      uint8_t slaveAddr = modbusReadHolding["params"]["slave_address"] | 1;
+      uint16_t startAddr = modbusReadHolding["params"]["start_address"] | 0;
+      uint16_t quantity = modbusReadHolding["params"]["quantity"] | 1;
+      
+      if (quantity > 0 && quantity <= 125) {
+        uint16_t registers[125];
+        Serial.print("Query: Modbus Read Holding Regs - Slave:");
+        Serial.print(slaveAddr);
+        Serial.print(", Start:");
+        Serial.print(startAddr);
+        Serial.print(", Qty:");
+        Serial.println(quantity);
+        
+        if (modbus->readHoldingRegisters(slaveAddr, startAddr, quantity, registers)) {
+          Serial.println("Success!");
+          
+          // Send response back
+          JsonDocument responseDoc;
+          JsonObject response = responseDoc.to<JsonObject>();
+          response["success"] = true;
+          response["slave"] = slaveAddr;
+          response["start"] = startAddr;
+          JsonArray regArray = response["registers"].to<JsonArray>();
+          
+          for (uint16_t i = 0; i < quantity; i++) {
+            regArray.add(registers[i]);
+            Serial.print("  Reg ");
+            Serial.print(startAddr + i);
+            Serial.print(": ");
+            Serial.println(registers[i]);
+          }
+          // hyper.sendMessage(msgfrom, response); // Uncomment to send response
+        } else {
+          Serial.print("Failed! Exception: 0x");
+          Serial.println(modbus->getLastException(), HEX);
+          
+          // Send error response
+          JsonDocument responseDoc;
+          JsonObject response = responseDoc.to<JsonObject>();
+          response["success"] = false;
+          response["exception"] = modbus->getLastException();
+          // hyper.sendMessage(msgfrom, response);
+        }
+      }
+    }
+
+    // Modbus Read Input Registers
+    JsonObject modbusReadInput = hyper.findAction(payload, "Query", "Modbus_Read_Input_Registers");
+    if (!modbusReadInput.isNull()) {
+      uint8_t slaveAddr = modbusReadInput["params"]["slave_address"] | 1;
+      uint16_t startAddr = modbusReadInput["params"]["start_address"] | 0;
+      uint16_t quantity = modbusReadInput["params"]["quantity"] | 1;
+      
+      if (quantity > 0 && quantity <= 125) {
+        uint16_t registers[125];
+        Serial.print("Query: Modbus Read Input Regs - Slave:");
+        Serial.print(slaveAddr);
+        Serial.print(", Start:");
+        Serial.print(startAddr);
+        Serial.print(", Qty:");
+        Serial.println(quantity);
+        
+        if (modbus->readInputRegisters(slaveAddr, startAddr, quantity, registers)) {
+          Serial.println("Success!");
+          
+          JsonDocument responseDoc;
+          JsonObject response = responseDoc.to<JsonObject>();
+          response["success"] = true;
+          response["slave"] = slaveAddr;
+          JsonArray regArray = response["registers"].to<JsonArray>();
+          
+          for (uint16_t i = 0; i < quantity; i++) {
+            regArray.add(registers[i]);
+            Serial.print("  Reg ");
+            Serial.print(startAddr + i);
+            Serial.print(": ");
+            Serial.println(registers[i]);
+          }
+          // hyper.sendMessage(msgfrom, response);
+        } else {
+          Serial.print("Failed! Exception: 0x");
+          Serial.println(modbus->getLastException(), HEX);
+        }
+      }
+    }
+
+    // Modbus Write Single Register
+    JsonObject modbusWriteSingle = hyper.findAction(payload, "Operate", "Modbus_Write_Single_Register");
+    if (!modbusWriteSingle.isNull()) {
+      uint8_t slaveAddr = modbusWriteSingle["params"]["slave_address"] | 1;
+      uint16_t regAddr = modbusWriteSingle["params"]["register_address"] | 0;
+      uint16_t value = modbusWriteSingle["params"]["value"] | 0;
+      
+      Serial.print("Command: Modbus Write Single Reg - Slave:");
+      Serial.print(slaveAddr);
+      Serial.print(", Reg:");
+      Serial.print(regAddr);
+      Serial.print(", Value:");
+      Serial.println(value);
+      
+      if (modbus->writeSingleRegister(slaveAddr, regAddr, value)) {
+        Serial.println("Success!");
+        
+        JsonDocument responseDoc;
+        JsonObject response = responseDoc.to<JsonObject>();
+        response["success"] = true;
+        response["slave"] = slaveAddr;
+        response["register"] = regAddr;
+        response["value"] = value;
+        // hyper.sendMessage(msgfrom, response);
+      } else {
+        Serial.print("Failed! Exception: 0x");
+        Serial.println(modbus->getLastException(), HEX);
+      }
+    }
+
+    // Modbus Write Multiple Registers
+    JsonObject modbusWriteMultiple = hyper.findAction(payload, "Operate", "Modbus_Write_Multiple_Registers");
+    if (!modbusWriteMultiple.isNull()) {
+      uint8_t slaveAddr = modbusWriteMultiple["params"]["slave_address"] | 1;
+      uint16_t startAddr = modbusWriteMultiple["params"]["start_address"] | 0;
+      JsonArray valuesArray = modbusWriteMultiple["params"]["values"];
+      
+      if (!valuesArray.isNull() && valuesArray.size() > 0 && valuesArray.size() <= 123) {
+        uint16_t quantity = valuesArray.size();
+        uint16_t values[123];
+        
+        Serial.print("Command: Modbus Write Multiple Regs - Slave:");
+        Serial.print(slaveAddr);
+        Serial.print(", Start:");
+        Serial.print(startAddr);
+        Serial.print(", Qty:");
+        Serial.println(quantity);
+        
+        // Copy values from JSON array
+        for (uint16_t i = 0; i < quantity; i++) {
+          values[i] = valuesArray[i].as<uint16_t>();
+          Serial.print("  Value[");
+          Serial.print(i);
+          Serial.print("]: ");
+          Serial.println(values[i]);
+        }
+        
+        if (modbus->writeMultipleRegisters(slaveAddr, startAddr, quantity, values)) {
+          Serial.println("Success!");
+          
+          JsonDocument responseDoc;
+          JsonObject response = responseDoc.to<JsonObject>();
+          response["success"] = true;
+          response["slave"] = slaveAddr;
+          response["start"] = startAddr;
+          response["quantity"] = quantity;
+          // hyper.sendMessage(msgfrom, response);
+        } else {
+          Serial.print("Failed! Exception: 0x");
+          Serial.println(modbus->getLastException(), HEX);
+        }
+      }
+    }
+
+    // Modbus Write Single Coil
+    JsonObject modbusWriteCoil = hyper.findAction(payload, "Operate", "Modbus_Write_Single_Coil");
+    if (!modbusWriteCoil.isNull()) {
+      uint8_t slaveAddr = modbusWriteCoil["params"]["slave_address"] | 1;
+      uint16_t coilAddr = modbusWriteCoil["params"]["coil_address"] | 0;
+      bool value = modbusWriteCoil["params"]["value"] | false;
+      
+      Serial.print("Command: Modbus Write Coil - Slave:");
+      Serial.print(slaveAddr);
+      Serial.print(", Coil:");
+      Serial.print(coilAddr);
+      Serial.print(", Value:");
+      Serial.println(value ? "ON" : "OFF");
+      
+      if (modbus->writeSingleCoil(slaveAddr, coilAddr, value)) {
+        Serial.println("Success!");
+      } else {
+        Serial.print("Failed! Exception: 0x");
+        Serial.println(modbus->getLastException(), HEX);
+      }
+    }
+
+    // Modbus Read Coils
+    JsonObject modbusReadCoils = hyper.findAction(payload, "Query", "Modbus_Read_Coils");
+    if (!modbusReadCoils.isNull()) {
+      uint8_t slaveAddr = modbusReadCoils["params"]["slave_address"] | 1;
+      uint16_t startAddr = modbusReadCoils["params"]["start_address"] | 0;
+      uint16_t quantity = modbusReadCoils["params"]["quantity"] | 1;
+      
+      if (quantity > 0 && quantity <= 2000) {
+        uint8_t coilData[250];  // 2000 bits / 8 = 250 bytes max
+        Serial.print("Query: Modbus Read Coils - Slave:");
+        Serial.print(slaveAddr);
+        Serial.print(", Start:");
+        Serial.print(startAddr);
+        Serial.print(", Qty:");
+        Serial.println(quantity);
+        
+        if (modbus->readCoils(slaveAddr, startAddr, quantity, coilData)) {
+          Serial.println("Success!");
+          
+          JsonDocument responseDoc;
+          JsonObject response = responseDoc.to<JsonObject>();
+          response["success"] = true;
+          JsonArray coilArray = response["coils"].to<JsonArray>();
+          
+          for (uint16_t i = 0; i < quantity; i++) {
+            bool coilState = (coilData[i / 8] & (1 << (i % 8))) != 0;
+            coilArray.add(coilState);
+            if (i < 20) {  // Print first 20 only
+              Serial.print("  Coil ");
+              Serial.print(startAddr + i);
+              Serial.print(": ");
+              Serial.println(coilState ? "ON" : "OFF");
+            }
+          }
+          // hyper.sendMessage(msgfrom, response);
+        } else {
+          Serial.print("Failed! Exception: 0x");
+          Serial.println(modbus->getLastException(), HEX);
+        }
+      }
     }
 
     // I2C Write - Write bytes to external I2C device
