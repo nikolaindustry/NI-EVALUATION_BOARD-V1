@@ -42,7 +42,7 @@ NIModbusRTUSlave *modbus;
 
 // Modbus Configuration
 const uint8_t SLAVE_ADDRESS = 1;        // This device's Modbus address
-const uint32_t MODBUS_BAUD = 9600;      // Common Modbus baud rate
+const uint32_t MODBUS_BAUD = 115200;    // Match HypervisorIOT baud rate
 
 // Storage for holding registers
 uint16_t holdingRegisters[20];
